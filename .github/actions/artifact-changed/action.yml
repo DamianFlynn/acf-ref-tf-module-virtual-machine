@@ -1,0 +1,112 @@
+---
+name: "🧳 Enumberate Artifacts Changed"
+description: "Determine the Arrays of Artifacts Changed"
+
+outputs:
+  modules:
+    description: "List of Modules with Changes"
+    value: ${{ steps.condense_modules.outputs.result }}
+  definitions:
+    description: "List of Definitions and Examples with Changes"
+    value: ${{ steps.condense_definitions.outputs.result }}
+  examples:
+    description: "List of Examples with Changes"
+    value: ${{ steps.condense_examples.outputs.result }}
+  documents:
+    description: "List of Documents with Changes"
+    value: ${{ steps.condense_documents.outputs.result }}
+
+runs:
+  using: "composite"
+  steps:
+    # Check the Commits to build the change set
+    - name: Get changed files
+      uses: Ana06/get-changed-files@v2.1.0
+      id: raw-files
+      with:
+        format: "json"
+
+    # Determine if the Main Definition has changed
+    - name: Condense Definations to directory list
+      uses: actions/github-script@v4
+      id: condense_definitions
+      env:
+        RAW_FILES: "${{ steps.raw-files.outputs.all }}"
+      with:
+        script: |
+          const raw = JSON.parse(process.env.RAW_FILES);
+          const definitions = Array.from(new Set(raw
+            .filter(x => x.includes('.tf'))
+            .filter(x => !x.startsWith('.'))
+            .filter(x => !x.includes('modules'))
+            .filter(x => !x.includes('examples'))
+            .map(x => x.substr(0, x.lastIndexOf('/')))
+            //.map(x => x.substr(0, x.lastIndexOf('/')).replace(/^/,"/"))// -> Path
+          ));
+          if (definitions.length < 1) return {};
+          return {
+            include: definitions.map(directory => ({ directory })),
+          };
+
+    # Determine which if any of the Examples has changed
+    - name: Condense Examples to directory list
+      uses: actions/github-script@v4
+      id: condense_examples
+      env:
+        RAW_FILES: "${{ steps.raw-files.outputs.all }}"
+      with:
+        script: |
+          const raw = JSON.parse(process.env.RAW_FILES);
+          const examples = Array.from(new Set(raw
+            .filter(x => x.includes('.tf'))
+            .filter(x => !x.startsWith('.'))
+            .filter(x => x.includes('examples'))
+            .map(x => x.substr(0, x.lastIndexOf('/')))
+            //.map(x => x.substr(0, x.lastIndexOf('/')).replace(/^/,"/"))// -> Path
+          ));
+          if (examples.length < 1) return {};
+          return {
+            include: examples.map(directory => ({ directory })),
+          };
+
+    # Determine which if any of the Modules has changed
+    - name: Condense Modules to directory list
+      uses: actions/github-script@v4
+      id: condense_modules
+      env:
+        RAW_FILES: "${{ steps.raw-files.outputs.all }}"
+      with:
+        script: |
+          const raw = JSON.parse(process.env.RAW_FILES);
+          const modules = Array.from(new Set(raw
+            .filter(x => x.includes('.tf'))
+            .filter(x => !x.startsWith('.'))
+            .filter(x => x.includes('modules'))
+            .map(x => x.substr(0, x.lastIndexOf('/')))
+            //.map(x => x.substr(0, x.lastIndexOf('/')).replace(/^/,"/"))// -> Path
+          ));
+          if (modules.length < 1) return {};
+          return {
+            include: modules.map(directory => ({ directory })),
+          };
+
+    # Determine if the Documentation has changed
+    - name: Condense Docs to directory list
+      uses: actions/github-script@v4
+      id: condense_documents
+      env:
+        RAW_FILES: "${{ steps.raw-files.outputs.all }}"
+      with:
+        script: |
+          const raw = JSON.parse(process.env.RAW_FILES);
+          const modules = Array.from(new Set(raw
+            .filter(x => x.includes('.tf'))
+            .filter(x => !x.startsWith('.'))
+            .filter(x => x.includes('docs'))
+            .map(x => x.substr(0, x.lastIndexOf('/')))
+            //.map(x => x.substr(0, x.lastIndexOf('/')).replace(/^/,"/"))// -> Path
+          ));
+          if (modules.length < 1) return {};
+          return {
+            include: modules.map(directory => ({ directory })),
+          };

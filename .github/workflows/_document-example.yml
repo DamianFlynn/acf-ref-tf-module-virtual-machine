@@ -1,0 +1,157 @@
+---
+name: "🧳 Document Examples"
+
+on:
+  workflow_call:
+    inputs:
+      examples:
+        required: true
+        type: string
+
+jobs:
+  build-examples:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: "${{ fromJson(inputs.examples) }}"
+      fail-fast: false
+    name: "Documenting Example: ${{ matrix.directory }}"
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_AD_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.AZURE_AD_CLIENT_SECRET }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      # Has this workflow already commented on the PR?
+      - name: Find Intial Comment
+        uses: peter-evans/find-comment@v2
+        id: initial-comment
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: Evaluating Example
+
+      - name: Comment on PR Evaluating Example ${{ matrix.directory }}
+        if: steps.initial-comment.outputs.comment-id == ''
+        id: build-example-comment
+        uses: peter-evans/create-or-update-comment@v2
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            # Evaluating Example: ${{ matrix.directory }}
+
+      # Initial Workflow Comment Reference for Updates
+      - name: Find Comment
+        uses: peter-evans/find-comment@v2
+        id: fc
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: Evaluating Example
+
+      # Grab the Current Terraform Binaries
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.2.3
+          terraform_wrapper: false
+
+      # Clone the repo to the 'src' folder
+      - name: Clone repository for analysis
+        uses: actions/checkout@v3
+        with:
+          # ref: ${{ github.sha }}
+          path: src
+
+      ##
+      ## STAGE 1 - Init Runner
+      ##
+      # Initialize requirements for Terraform
+      # https://www.terraform.io/cli/config/environment-variables#tf_cli_args-and-tf_cli_args_name
+      - name: Initialize Terraform
+        id: init
+        continue-on-error: true
+        run: |
+          cd src/${{ matrix.directory }}
+          terraform init -input=false
+        # terraform init -reconfigure
+        # env:
+        #   TF_CLI_ARGS: '-var-file="env/dev.tfvars" -backend-config="bucket=${{ secrets.STATE_BUCKET }}" -backend-config="prefix=dev"'
+
+      - name: Install terraform docs
+        run: |
+          wget https://github.com/terraform-docs/terraform-docs/releases/download/v0.16.0/terraform-docs-v0.16.0-linux-amd64.tar.gz \
+            --output-document - \
+            --progress dot:mega \
+          | tar -xvz
+
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v2
+        with:
+          go-version: ^1.18
+        id: go
+
+      - name: Installing Terraform Graph Beautifier
+        run: |
+          go install github.com/pcasteran/terraform-graph-beautifier@v0.2.0
+
+      ##
+      ## STAGE 2 - Document
+      ##
+
+      - name: Render terraform docs
+        id: doc
+        run: |
+          echo '# Module Attributes' >> 'src/${{ matrix.directory }}/README.md'
+          touch 'src/${{ matrix.directory }}/README.md'
+          ./terraform-docs markdown table \
+            --output-mode inject \
+            --output-file README.md \
+            --sort-by required \
+            'src/${{ matrix.directory }}'
+
+      - name: Generate terraform graph
+        id: doc-graph
+        run: |
+          cd src/${{ matrix.directory }}
+
+          terraform graph | terraform-graph-beautifier \
+            --exclude="module.root.provider" \
+            --output=cyto-html > terragraph.html
+
+      ##
+      ## STAGE 3 - Store Documents
+      ##
+
+      # - name: Setup upterm debug session
+      #   uses: lhotari/action-upterm@v1
+      #   with:
+      #     ## limits ssh access and adds the ssh public key for the user which triggered the workflow
+      #     limit-access-to-actor: false
+
+      - name: Commit files
+        run: |
+          cd src
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A :/
+          git commit -m "Applied Version Bump's"
+
+      - name: Update comment with docs
+        if: steps.fc.outputs.comment-id != '' &&  steps.doc-graph.outcome == 'success'
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          body: |
+            ## Documention
+
+            Environment status:
+            ```
+            ${{ steps.doc-graph.outputs.stdout }}
+            ```
+
+          reactions: hooray
+          edit-mode: append

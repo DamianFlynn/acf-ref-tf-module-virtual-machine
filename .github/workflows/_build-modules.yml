@@ -1,0 +1,75 @@
+---
+name: "🧳 Build Modules"
+
+on:
+  workflow_call:
+    inputs:
+      modules:
+        required: true
+        type: string
+
+jobs:
+  build-modules:
+    name: "Build Module"
+    runs-on: ubuntu-latest
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_AD_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.AZURE_AD_CLIENT_SECRET }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      # Has this workflow already commented on the PR?
+      - name: Find Intial Comment
+        uses: peter-evans/find-comment@v2
+        id: initial-comment
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: Verifying Module
+
+      - name: Comment on PR Verifying Module ${{ matrix.directory }}
+        if: steps.initial-comment.outputs.comment-id == ''
+        id: build-example-comment
+        uses: peter-evans/create-or-update-comment@v2
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            # Verifying Module
+
+      # Initial Workflow Comment Reference for Updates
+      - name: Find Comment
+        uses: peter-evans/find-comment@v2
+        id: fc
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: Verifying Module
+
+      # Grab the Current Terraform Binaries
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.2.3
+
+      # Clone the repo to the 'src' folder
+      - name: Clone repository for analysis
+        uses: actions/checkout@v3
+        with:
+          # ref: ${{ github.sha }}
+          path: src
+
+      - name: Update comment with Preping
+        if: steps.fc.outputs.comment-id != '' && steps.init.outcome != 'success'
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          body: |
+
+            - Initializing  verification tool chain.
+
+          edit-mode: append
+          reactions: rocket

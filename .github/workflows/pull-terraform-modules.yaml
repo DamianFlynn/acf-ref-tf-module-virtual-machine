@@ -1,0 +1,236 @@
+---
+name: "🧬 Terraform Modules"
+concurrency: # avoid concurrent runs  ¯\_(ツ)_/¯
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches:
+      - main
+  pull_request_target:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    name: "Context Checker"
+    outputs:
+      definitions: ${{ steps.changeset.outputs.definitions }}
+      modules: ${{ steps.changeset.outputs.modules }}
+      examples: ${{ steps.changeset.outputs.examples }}
+      documenation: ${{ steps.changeset.outputs.documents }}
+      # release-type: ${{ steps.check_pr_label.outputs.release-type}}
+      is-merge-event: >-
+        ${{ github.event_name == 'pull_request_target'
+         && github.event.action == 'closed'
+         && github.event.pull_request.merged == true }}
+
+    steps:
+      - uses: actions-ecosystem/action-add-labels@v1
+        with:
+          labels: do-not-merge
+
+      - uses: actions/checkout@v3
+      - name: Noob Checker
+        id: welcome
+        uses: ./.github/actions/welcome-noob
+
+      - name: Check Release Label
+        id: release-label
+        uses: ./.github/actions/release-labels
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: tfsec
+        uses: aquasecurity/tfsec-pr-commenter-action@v1.2.0
+        with:
+          github_token: ${{ github.token }}
+
+      - name: Enumberate Artifact Change Sets
+        id: changeset
+        uses: ./.github/actions/artifact-changed
+
+      - name: Check outputs from changeset
+        run: |
+          echo "Modules - ${{ steps.changeset.outputs.modules }}"
+          echo "Main Definition - ${{ steps.changeset.outputs.definitions }}"
+          echo "Examples - ${{ steps.changeset.outputs.examples }}"
+          echo "Documenation - ${{ steps.changeset.outputs.documents }}"
+
+      - name: Remove do-not-merge label
+        if: ${{ needs.detect.outputs.documenation != '{}' || needs.detect.outputs.definitions != '{}' ||  needs.detect.outputs.modules != '{}' || needs.detect.outputs.examples != '{}' }}
+        uses: actions-ecosystem/action-remove-labels@v1
+        with:
+          labels: "do-not-merge"
+
+  #
+  # >> Module : Main : Examples : Docs
+  # >> 0:0:0:0 = No Changes
+  # >> 0:1:0:0 = Main Changed Only
+
+  call-merge-pr:
+    name: Merge PR with No Release
+    needs: detect
+    if: |
+      needs.detect.outputs.is-merge-event == 'true'  &&
+      ( needs.detect.outputs.modules == '{}' || needs.detect.outputs.examples == '{}' || needs.detect.outputs.documenation == '{}' )
+    uses: ./.github/workflows/_merge-pr-no-release.yml
+    secrets: inherit
+
+  # ## Docs
+  # >> 0:0:0:1 = Documentation Update
+  #              CI:
+  #                - build_documentation
+  #              CD:
+  #                - changelog: doc updates
+  #                - release_documentation
+  #                - release_module
+  #
+
+  call-build-documenation:
+    name: Build Documentation
+    needs: detect
+    if: ${{ needs.detect.outputs.documenation != '{}' && needs.detect.outputs.is-merge-event != 'true' }}
+    uses: ./.github/workflows/_build-documenation.yml
+
+  # ## Examples
+  # >> 0:0:1:0 = Definition Example Update
+  #              CI:
+  #                - matrix: [examples -> reference 'latest' release]
+  #                  - verify_docs (changed definition)
+  #                  - terraform_plan (changed definition)
+  #                  - terraform_apply (changed definition)
+  #                  - terraform_destroy (changed definition)
+  #                  - terraform_document (changed definition)
+  #              CD:
+  #                - changelog: examples
+  #                - release_documentation
+  #                - release_module
+  #
+
+  call-build-examples:
+    name: Build Examples
+    needs: detect
+    if: ${{ needs.detect.outputs.examples != '{}' && needs.detect.outputs.is-merge-event != 'true' }}
+    uses: ./.github/workflows/_build-examples.yml
+    with:
+      examples: ${{ needs.detect.outputs.examples }}
+    secrets: inherit
+
+  # Build Documention once we know the examples are working
+  call-document-examples:
+    name: Document Examples
+    needs: [detect, call-build-examples]
+    if: ${{ always() && !cancelled() && needs.call-build-examples.result == 'success' }}
+    uses: ./.github/workflows/_document-example.yml
+    with:
+      examples: ${{ needs.detect.outputs.examples }}
+    secrets: inherit
+
+  # ## Definition
+  # >> 0:1:0:0 = Definition Main Update
+  #              CI: [main -> references 'local modules']
+  #                - terraform_plan (main defination)
+  #                - verify_docs (main defination)
+  #                - ::bot:: instructions
+  #                - ::bot::
+  #                    -> apply
+  #                       - terraform apply
+  #                       - set merge_ok flag
+  #              CD Jobs:
+  #                - if (merge_ok flag)
+  #                  - changelog: main definition (no-release)
+
+  call-build-definition:
+    name: Build Main Definition
+    needs: detect
+    if: ${{ needs.detect.outputs.definitions != '{}' && needs.detect.outputs.is-merge-event != 'true' }}
+    uses: ./.github/workflows/_build-definition.yml
+    with:
+      definitions: ${{ needs.detect.outputs.definitions }}
+    secrets: inherit
+
+  # ## Module
+  #
+  # >> 1:0:0:0 = Module Update
+  #              CI:
+  #                - terraform_plan (main defination)
+  #                - verify_docs (main defination)
+  #                - package_module
+  #                - stage_module
+  #                - patch_examples_use_stage
+  #                - matrix:
+  #                  - terraform_plan (examples)
+  #                  - terraform_apply (examples)
+  #                  - terraform_destroy (examples)
+  #                  - terraform_document (examples)
+  #                - ::bot:: instructions
+  #                - ::bot::
+  #                    -> apply
+  #                       - terraform apply
+  #                       - set merge_ok flag
+  #              CD:
+  #                - if (merge_ok flag)
+  #                  - changelog: modules
+  #                  - release_documentation
+  #                  - release_module
+
+  call-build-module:
+    name: Build modules
+    needs: detect
+    if: ${{ needs.detect.outputs.modules != '{}' && needs.detect.outputs.is-merge-event != 'true' }}
+    uses: ./.github/workflows/_build-modules.yml
+    with:
+      modules: ${{ needs.detect.outputs.modules }}
+    secrets: inherit
+
+  # Remove the 'do-not-merge' label after clear tests
+  merge-unblocked:
+    name: Allow Merge
+    needs:
+      [
+        detect,
+        call-build-examples,
+        call-build-definition,
+        call-build-documenation,
+      ]
+    if: ${{ always() && !cancelled() && needs.call-build-examples.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove do-not-merge label
+        uses: actions-ecosystem/action-remove-labels@v1
+        with:
+          labels: "do-not-merge"
+
+  # All Tests are Clear, we can proceed with merge
+
+  # TODO: BUG missfires with no release
+  # Definitions should not actaully release
+
+  call-merge-pr-releases:
+    name: Merge PR and Release
+    needs: detect
+    if: |
+      needs.detect.outputs.is-merge-event == 'true'  &&
+      ( needs.detect.outputs.modules != '{}' || needs.detect.outputs.examples != '{}' || needs.detect.outputs.documenation != '{}' )
+    uses: ./.github/workflows/_merge-pr-release.yml
+    secrets:
+      inherit
+
+  # >> 0:0:1:1 = Documentation Update, Definition Example Update
+  #              CI:
+  #                - build_documentation
+  #                - matrix: [examples -> reference 'latest' release]
+  #                  - verify_docs (changed definition)
+  #                  - terraform_plan (changed definition)
+  #                  - terraform_apply (changed definition)
+  #                  - terraform_destroy (changed definition)
+  #                  - terraform_document (changed definition)
+  #              CD:
+  #                - changelog: doc updates, examples
+  #                - release_documentation
+  #                - release_module

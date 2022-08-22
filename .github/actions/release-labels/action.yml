@@ -1,0 +1,105 @@
+---
+name: "🧳 Release Label"
+description: "Check the Labels on the Release"
+inputs:
+  token:
+    required: true
+    description: "GitHub Token to Authenticate using"
+    # default: 'World'
+
+runs:
+  using: "composite"
+  steps:
+
+    # I'm getting the labels from the API and not the context("contains(github.event.pull_request.labels.*.name, 'Env Promote')") as the labels
+    # are added in 2nd API call so they aren't included in the PR context
+    - name: Check PR labels
+      shell: bash
+      id: check_pr_label
+      env:
+        PR_URL: ${{github.event.pull_request.html_url}}
+        GITHUB_TOKEN: ${{ inputs.token }}
+      run: |
+        LABELS=$(gh pr view $PR_URL --json labels  --jq '.labels[]| select((.name|contains("minor")) or (.name|contains("major")) or (.name|contains("patch")) or (.name|contains("no-release"))) |.name')
+        NUMBER_OF_LABELS=$(echo "$LABELS" |wc -w)
+        if [ "$NUMBER_OF_LABELS" -eq "1" ] ; then
+          echo "Found: $LABELS"
+          PRTYPE="Found: $LABELS"
+          echo "::set-output name=release-type::$LABELS"
+        elif [ "$NUMBER_OF_LABELS" -gt "1" ] ; then
+          echo "::error ::Too many release type labels: $( echo $LABELS | tr '\n' ' ' )"
+          PRTYPE="#Warning /nToo many release type labels: $( echo $LABELS | tr '\n' ' ' )"
+        else
+          echo "::error ::No release 'type' labels found(patch/minor/major/no-release)"
+          PRTYPE="#Warning /nNo release 'type' labels found(patch/minor/major/no-release)"
+        fi
+
+
+    # Has this workflow already commented on the PR?
+    - name: Find Intial Comment
+      uses: peter-evans/find-comment@v2
+      id: initial-comment
+      with:
+        token: ${{ inputs.token }}
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: "github-actions[bot]"
+        body-includes: Release Type Label
+
+
+    - name: Comment on PR Configuration Planning ${{ matrix.directory }}
+      if: steps.initial-comment.outputs.comment-id == ''
+      id: build-example-comment
+      uses: peter-evans/create-or-update-comment@v2
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        body: |
+          # Release Type Label
+
+          Checking Status...
+
+    # Initial Workflow Comment Reference for Updates
+    - name: Find Comment
+      uses: peter-evans/find-comment@v2
+      id: fc
+      with:
+        token: ${{ inputs.token }}
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: "github-actions[bot]"
+        body-includes: Release Type Label
+
+
+    - name: Missing Label
+      if: steps.fc.outputs.comment-id != '' && steps.check_pr_label.outputs.release-type == ''
+      uses: peter-evans/create-or-update-comment@v1
+      with:
+        comment-id: ${{ steps.fc.outputs.comment-id }}
+        body: |
+          # Release Type Label
+
+          Pull Requests are requied to be labeled using a **'type/'** label.
+
+          Select the appropiate type as follows:
+          * **MAJOR** when you make incompatible API changes
+          * **MINOR** when you add functionality in a backwards compatible manner
+          * **PATCH** when you make backwards compatible bug fixes.
+
+          ### Action:
+
+          You **must** apply an _single_ appropiate *'type/'* label, to proceed with the PR
+
+        edit-mode: replace
+
+    - name: Delete comment, Labels Ok
+      uses: jungwinter/comment@v1
+      with:
+        type: delete
+        comment_id: ${{ steps.fc.outputs.comment-id }}
+        token: ${{ inputs.token }}
+
+
+    - name: Block Job due to Label issue
+      if: steps.check_pr_label.outputs.release-type == ''
+      shell: bash
+      run: |
+        echo ${{ env.PRTYPE }}
+        exit 1

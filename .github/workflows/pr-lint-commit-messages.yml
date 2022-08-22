@@ -1,0 +1,60 @@
+---
+name: "Lint: Commit Messages"
+
+on:
+  - pull_request
+
+jobs:
+  commitlint:
+    name: Commit Comments
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout the Code
+      - uses: actions/checkout@v3
+        name: Checkout the Repo
+        with:
+          fetch-depth: 0
+
+      # Lint the Comments
+      - uses: wagoid/commitlint-github-action@v5
+        name: Lint Commit Messages
+        id: lint
+        continue-on-error: true
+
+      # Format the results of the linting for the PR
+      - uses: actions/github-script@v6
+        name: Process Lint Results
+        with:
+          script: |
+            if(`${{steps.lint.outcome}}` === "success") {
+              return "No errors";
+            };
+
+            output = `
+            You have commit message errors
+
+            To correct, run \`git rebase -i HEAD~X\`, where X is number of commits, and change from pick to reword, save, and then change the commit message.
+
+            List of errors:
+            `;
+            JSON.parse(`${{steps.lint.outputs.results}}`).forEach(result => {
+              if(result.warnings.length > 0 || result.errors.length > 0) {
+                output += `Commit ${result.hash}, message \`${result.message}\``;
+                output += "\n";
+                result.warnings.forEach(warning => {
+                  output += `⚠  ${warning}`;
+                });
+                result.errors.forEach(error => {
+                  output += `⧗  ${error}`;
+                });
+                output += "\n\n";
+              }
+            });
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+            core.setFailed("commit message lint failed");

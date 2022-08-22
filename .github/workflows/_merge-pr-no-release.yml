@@ -1,0 +1,162 @@
+---
+name: "🧳 Merge with No Release"
+
+on:
+  workflow_call:
+
+env:
+  AZCOPY_SPA_CLIENT_SECRET: ${{ secrets.ACF_REF_AZ_MODULE_STORAGE_SECRET }}
+
+jobs:
+  merge-pr:
+    runs-on: ubuntu-latest
+    name: "Merging PR"
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_AD_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.AZURE_AD_CLIENT_SECRET }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      # Determine the SemVer
+
+      - name: Clone repository for analysis
+        uses: actions/checkout@v3
+        with:
+          path: src
+
+      - name: Calculate the SemVer
+        id: semver
+        uses: damianflynn/gha-calculate-next-semver@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check outputs from changeset
+        run: |
+          echo "release type - ${{ steps.semver.outputs.release-type }}"
+          echo "current ver - ${{ steps.semver.outputs.current-version }}"
+          echo "new ver - ${{ steps.semver.outputs.new-version }}"
+          echo "new major ver - ${{ steps.semver.outputs.new-major-version }}"
+          echo "new minor ver - ${{ steps.semver.outputs.new-minor-version }}"
+
+      # Add VERSION file to the repo
+      - name: Store version numbers
+        if: steps.semver.outcome == 'success'
+        run: |
+          mkdir output
+          echo '${{ steps.semver.outputs.current-version }}' > output/previous-version.txt
+          echo '${{ steps.semver.outputs.new-version }}' > output/new-version.txt
+          echo '${{ steps.semver.outputs.new-major-version }}' > output/new-major-version.txt
+          echo '${{ steps.semver.outputs.new-minor-version }}' > output/new-minor-version.txt
+          echo '${{ steps.semver.outputs.new-version }}' > src/VERSION
+
+      # Add Change Log
+      - name: Comment on PR Merge Example ${{ matrix.directory }}
+        if: steps.initial-comment.outputs.comment-id == ''
+        id: merge-pr-comment
+        uses: peter-evans/create-or-update-comment@v2
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            # Merging Pull Request
+
+            No artifact's were altered in the context of this pull request to require a new release.
+
+            ## Semantic Version information
+
+            The current released version will remain as ** ${{ steps.semver.outputs.current-version }}
+
+      # Initial Workflow Comment Reference for Updates
+      - name: Find Comment
+        uses: peter-evans/find-comment@v2
+        id: fc
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: Deploying Release
+
+      - name: Extract changelog entry
+        id: changelog
+        uses: actions/github-script@v5
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const { data: prInfo } = await github.rest.pulls.get({
+              owner, repo,
+              pull_number: context.issue.number,
+            });
+            console.log('Found PR body:|');
+            console.log(prInfo.body);
+
+            const changelogEntry = ((prInfo.body
+              .split(/^#+ ?/m)
+              .find(x => x.startsWith('Changelog'))
+              || '').split(/^```/m)[1] || '').trim();
+            if (!changelogEntry)
+              throw `'Changelog' section not found in PR body! Please add it back.`;
+            if (changelogEntry.match(/^TODO:/m))
+              throw `'Changelog' section needs proper text, instead of 'TODO'`;
+
+            const { writeFile } = require('fs').promises;
+            await writeFile('output/changelog.md', `
+            * PR [#${ prInfo.number }](${ prInfo.html_url }) - ${ prInfo.title }
+
+            \`\`\`
+            ${changelogEntry}
+            \`\`\`
+            `.trimLeft(), { encoding: 'utf-8' })
+
+      - name: Output formatted ChangeLog
+        if: steps.changelog.outcome == 'success'
+        id: get-changelog
+        run: |
+          body="$(cat output/changelog.md)"
+          body="${body//'%'/'%25'}"
+          body="${body//$'\n'/'%0A'}"
+          body="${body//$'\r'/'%0D'}"
+          echo "::set-output name=body::$body"
+
+      - name: Replace the Version in files
+        uses: jacobtomlinson/gha-find-replace@v2
+        with:
+          find: '_version" = "0.0.0"'
+          replace: '_version" = "${{ steps.semver.outputs.new-version }}"'
+          regex: false
+          include: "**versions.tf"
+
+      - name: Commit files
+        run: |
+          cd src
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A :/
+          git commit -m "Applied Version Bump's"
+          git push
+
+      - name: Tag Only
+        id: tag
+        uses: actions/github-script@v5
+        with:
+          script: |
+            github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/${{ steps.semver.outputs.new-version }}',
+              sha: context.sha
+            })
+
+      - name: Update comment with Tag and Change log
+        if: steps.fc.outputs.comment-id != '' && steps.tag.outcome == 'success'
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          body: |
+            ## Build [${{ steps.semver.outputs.new-version }}](${{steps.tag.outputs.html_url}})
+
+            **This change did not generate a new Release**
+
+            ${{ steps.get-changelog.outputs.body }}
+
+          edit-mode: append
