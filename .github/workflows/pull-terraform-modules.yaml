@@ -95,7 +95,11 @@ jobs:
     name: Build Documentation
     needs: detect
     if: ${{ needs.detect.outputs.documenation != '{}' && needs.detect.outputs.is-merge-event != 'true' }}
-    uses: ./.github/workflows/_build-documenation.yml
+    uses: innofactororg/ghw-markdown-convert/.github/workflows/build-documentation.yml@main
+    secrets: inherit
+    with:
+      OrderFile: document.order
+      OutFile: document.pdf
 
   # ## Examples
   # >> 0:0:1:0 = Definition Example Update
