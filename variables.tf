@@ -1,7 +1,13 @@
 variable "name" {
   description = "(Required) Specifies the name of the Logic Application"
   type        = string
-  default     = "p-sol-alpha"
+  default     = "p-mod-vm"
+}
+
+variable "resourceGroupName" {
+  description = "(Required) Specifies the name of the resource group"
+  type        = string
+  default     = "p-mod-vm"
 }
 
 variable "location" {
@@ -16,7 +22,7 @@ variable "tags" {
   default = {
     Environment   = "dev"
     ManagedBy     = "terraform"
-    Repo          = "terraform-component-lz-scaffolding"
+    Repo          = "terraform-module-virtual-machine"
     Configuration = "2022-07-19-1345"
   }
 }

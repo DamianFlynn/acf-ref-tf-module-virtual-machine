@@ -15,7 +15,7 @@ terraform {
     resource_group_name  = "p-gov-tf"
     storage_account_name = "pgovtfstate202206281650"
     container_name       = "workflow"
-    key                  = "terraform.tfstate"
+    key                  = "module-virtual-machine.tfstate"
     subscription_id      = "64499dc8-d437-45d7-8d2e-4910e88e17b2"
   }
 }
