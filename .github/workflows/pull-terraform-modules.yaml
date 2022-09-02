@@ -22,7 +22,7 @@ jobs:
       definitions: ${{ steps.changeset.outputs.definitions }}
       modules: ${{ steps.changeset.outputs.modules }}
       examples: ${{ steps.changeset.outputs.examples }}
-      documenation: ${{ steps.changeset.outputs.documents }}
+      documentation: ${{ steps.changeset.outputs.documents }}
       # release-type: ${{ steps.check_pr_label.outputs.release-type}}
       is-merge-event: >-
         ${{ github.event_name == 'pull_request_target'
@@ -59,10 +59,10 @@ jobs:
           echo "Modules - ${{ steps.changeset.outputs.modules }}"
           echo "Main Definition - ${{ steps.changeset.outputs.definitions }}"
           echo "Examples - ${{ steps.changeset.outputs.examples }}"
-          echo "Documenation - ${{ steps.changeset.outputs.documents }}"
+          echo "Documentation - ${{ steps.changeset.outputs.documents }}"
 
       - name: Remove do-not-merge label
-        if: ${{ needs.detect.outputs.documenation != '{}' || needs.detect.outputs.definitions != '{}' ||  needs.detect.outputs.modules != '{}' || needs.detect.outputs.examples != '{}' }}
+        if: ${{ needs.detect.outputs.documentation != '{}' || needs.detect.outputs.definitions != '{}' ||  needs.detect.outputs.modules != '{}' || needs.detect.outputs.examples != '{}' }}
         uses: actions-ecosystem/action-remove-labels@v1
         with:
           labels: "do-not-merge"
@@ -77,7 +77,7 @@ jobs:
     needs: detect
     if: |
       needs.detect.outputs.is-merge-event == 'true'  &&
-      ( needs.detect.outputs.modules == '{}' || needs.detect.outputs.examples == '{}' || needs.detect.outputs.documenation == '{}' )
+      ( needs.detect.outputs.modules == '{}' || needs.detect.outputs.examples == '{}' || needs.detect.outputs.documentation == '{}' )
     uses: ./.github/workflows/_merge-pr-no-release.yml
     secrets: inherit
 
@@ -91,11 +91,15 @@ jobs:
   #                - release_module
   #
 
-  call-build-documenation:
+  call-build-documentation:
     name: Build Documentation
     needs: detect
-    if: ${{ needs.detect.outputs.documenation != '{}' && needs.detect.outputs.is-merge-event != 'true' }}
-    uses: ./.github/workflows/_build-documenation.yml
+    if: ${{ needs.detect.outputs.documentation != '{}' && needs.detect.outputs.is-merge-event != 'true' }}
+    uses: innofactororg/ghw-markdown-convert/.github/workflows/build-documentation.yml@main
+    secrets: inherit
+    with:
+      OrderFile: document.order
+      OutFile: document.pdf
 
   # ## Examples
   # >> 0:0:1:0 = Definition Example Update
@@ -196,7 +200,7 @@ jobs:
         detect,
         call-build-examples,
         call-build-definition,
-        call-build-documenation,
+        call-build-documentation,
       ]
     if: ${{ always() && !cancelled() && needs.call-build-examples.result == 'success' }}
     runs-on: ubuntu-latest
@@ -216,7 +220,7 @@ jobs:
     needs: detect
     if: |
       needs.detect.outputs.is-merge-event == 'true'  &&
-      ( needs.detect.outputs.modules != '{}' || needs.detect.outputs.examples != '{}' || needs.detect.outputs.documenation != '{}' )
+      ( needs.detect.outputs.modules != '{}' || needs.detect.outputs.examples != '{}' || needs.detect.outputs.documentation != '{}' )
     uses: ./.github/workflows/_merge-pr-release.yml
     secrets:
       inherit
